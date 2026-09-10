@@ -30,10 +30,16 @@ To start from a pretrained [RobustBench](https://github.com/RobustBench/robustbe
 
 ```bash
 pip install "setuptools<82" git+https://github.com/RobustBench/robustbench.git
-python prepare_robustbench.py --model Rice2020Overfitting    # or Carmon2019Unlabeled
+python prepare_robustbench.py --model Carmon2019Unlabeled
 ```
 
-then use `checkpoints/backbone_robustbench_Rice2020Overfitting.pt` as `--ckpt`.
+then use `checkpoints/backbone_robustbench_Carmon2019Unlabeled.pt` as `--ckpt`. With the paper's settings:
+
+```bash
+python train_ssl.py --ckpt checkpoints/backbone_robustbench_Carmon2019Unlabeled.pt --epochs 200 --train-per-class 5000
+python evaluate.py --ckpt checkpoints/backbone_robustbench_Carmon2019Unlabeled.pt --ssl-ckpt checkpoints/ssl_head.pt \
+    --attack autoattack --test-per-class 1000 --n-test 10000
+```
 
 ## Citation
 
