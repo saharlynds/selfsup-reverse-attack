@@ -4,6 +4,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
+import torch.nn.functional as F
 
 from src.attacks import attack
 from src.augment import SimCLRAugment, make_views
@@ -34,6 +35,23 @@ def main():
     loss, acc, per_img = nt_xent(z, batch_size=4, n_views=3)
     assert torch.isfinite(loss), "NT-Xent produced non-finite loss"
     print(f"[ok] nt_xent loss={loss.item():.3f} acc={acc:.3f} per_image={tuple(per_img.shape)}")
+
+    zn = F.normalize(z, dim=1)
+    s = zn @ zn.t() / 0.2
+    ids = torch.arange(4).repeat(3)
+    terms = []
+    for i in range(12):
+        others = [k for k in range(12) if k != i]
+        lse = torch.logsumexp(s[i, others], 0)
+        terms += [lse - s[i, j] for j in others if ids[j] == ids[i]]
+    assert torch.allclose(loss, torch.stack(terms).mean(), atol=1e-5), "nt_xent does not match Eq. 4"
+    neg = torch.randn(10, 16)
+    _, _, pa = nt_xent(z, batch_size=4, n_views=3, negatives=neg)
+    z2 = z.clone()
+    z2[1::4] += 1.0
+    _, _, pb = nt_xent(z2, batch_size=4, n_views=3, negatives=neg)
+    assert torch.allclose(pa[0], pb[0]) and not torch.allclose(pa[1], pb[1]), "negatives leak across images"
+    print("[ok] nt_xent matches Eq. 4, and with a negative set each image is scored on its own")
 
     for kind in ["pgd", "bim", "cw"]:
         d = attack(backbone, x, y, eps=8 / 255, alpha=2 / 255, iters=3, kind=kind)

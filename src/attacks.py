@@ -57,6 +57,7 @@ def attack(
     aug=None,
     n_views: int = 4,
     temperature: float = 0.2,
+    negatives=None,
 ):
     """Return the perturbation delta; lambda_s > 0 gives the defense aware attack."""
     if kind == "none":
@@ -76,7 +77,7 @@ def attack(
             from .ssl_loss import contrastive_loss_on_images
 
             l_s, _, _ = contrastive_loss_on_images(
-                x + delta, backbone, ssl_head, aug, n_views=n_views, temperature=temperature
+                x + delta, backbone, ssl_head, aug, n_views=n_views, temperature=temperature, negatives=negatives
             )
             loss = loss - lambda_s * l_s
 

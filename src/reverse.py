@@ -19,6 +19,7 @@ def reverse_attack(
     random_start: bool = True,
     track_every: int = 0,
     labels=None,
+    negatives=None,
 ):
     """Returns (r, history)."""
     backbone.eval()
@@ -37,7 +38,7 @@ def reverse_attack(
     history = []
     for k in range(iters):
         loss, _, _ = contrastive_loss_on_images(
-            x_in + r, backbone, ssl_head, aug, n_views=n_views, temperature=temperature
+            x_in + r, backbone, ssl_head, aug, n_views=n_views, temperature=temperature, negatives=negatives
         )
         grad = torch.autograd.grad(loss, r)[0]
 

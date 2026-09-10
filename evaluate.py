@@ -33,6 +33,8 @@ def main():
     p.add_argument("--rev-step", default="sign", choices=["sign", "grad"])
     p.add_argument("--rev-alpha", type=float, default=2.0, help="reverse attack step size, in units of 1/255")
     p.add_argument("--n-views", type=int, default=4)
+    p.add_argument("--n-negatives", type=int, default=256,
+                   help="clean training images used as negatives in L_s; 0 uses the other images in the batch")
     p.add_argument("--random-reverse", action="store_true", help="baseline: add random noise instead of running the reverse attack")
     p.add_argument("--track-every", type=int, default=5)
     p.add_argument("--out", default="results")
@@ -63,15 +65,25 @@ def main():
     aug = SimCLRAugment(use_hue=sk.get("use_hue", True))
 
     if args.fake_data:
-        _, test_loader, names = fake_loaders(n_classes=len(ck["class_names"]), batch_size=args.batch_size)
+        train_loader, test_loader, names = fake_loaders(n_classes=len(ck["class_names"]), batch_size=args.batch_size)
     else:
-        _, test_loader, names = get_cifar10_subset(
+        train_loader, test_loader, names = get_cifar10_subset(
             data_dir=args.data_dir,
             keep_classes=tuple(ck["classes"]),
             test_per_class=args.test_per_class,
             test_batch_size=args.batch_size,
+            augment_train=False,
             seed=args.seed,
         )
+
+    negatives = None
+    if args.n_negatives > 0:
+        pool = []
+        for xb, _ in train_loader:
+            pool.append(xb)
+            if sum(len(t) for t in pool) >= args.n_negatives:
+                break
+        negatives = torch.cat(pool)[: args.n_negatives].to(device)
 
     eps = args.epsilon / 255
     alpha = args.alpha / 255
@@ -90,7 +102,7 @@ def main():
 
         delta = attack(
             backbone, x, y, eps=eps, alpha=alpha, iters=args.attack_iters, kind=args.attack,
-            lambda_s=args.lambda_s, ssl_head=head, aug=aug, n_views=args.n_views,
+            lambda_s=args.lambda_s, ssl_head=head, aug=aug, n_views=args.n_views, negatives=negatives,
         )
         x_a = (x + delta).clamp(0, 1)
 
@@ -105,11 +117,12 @@ def main():
         else:
             r_a, hist = reverse_attack(
                 backbone, head, aug, x_a, eps_rev=eps_rev, alpha=rev_alpha, iters=args.rev_iters,
-                n_views=args.n_views, step=args.rev_step, track_every=args.track_every, labels=y,
+                n_views=args.n_views, step=args.rev_step, track_every=args.track_every,
+                labels=y, negatives=negatives,
             )
             r_c, _ = reverse_attack(
                 backbone, head, aug, x, eps_rev=eps_rev, alpha=rev_alpha, iters=args.rev_iters,
-                n_views=args.n_views, step=args.rev_step,
+                n_views=args.n_views, step=args.rev_step, negatives=negatives,
             )
 
         with torch.no_grad():
@@ -120,7 +133,7 @@ def main():
             ("clean", x, ls_clean), ("attacked", x_a, ls_att), ("reversed", (x_a + r_a).clamp(0, 1), ls_rev)
         ]:
             _, _, per_img = contrastive_loss_on_images(
-                img, backbone, head, aug, n_views=args.n_views, no_grad=True
+                img, backbone, head, aug, n_views=args.n_views, no_grad=True, negatives=negatives
             )
             store.extend(per_img.cpu().tolist())
 
@@ -139,6 +152,7 @@ def main():
         "attack_iters": args.attack_iters,
         "epsilon_255": args.epsilon,
         "lambda_s": args.lambda_s,
+        "n_negatives": 0 if negatives is None else len(negatives),
         "reverse": {"v_mult": args.rev_mult, "K": args.rev_iters, "step": args.rev_step,
                     "random_baseline": args.random_reverse},
         "clean_standard": counts["clean_std"] / n * 100,
