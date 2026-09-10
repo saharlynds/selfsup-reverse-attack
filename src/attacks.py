@@ -2,6 +2,7 @@
 from typing import Optional
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 
@@ -43,6 +44,36 @@ def _cw_margin_loss(logits, y, kappa: float = 50.0):
     return -F.relu(correct - wrong + kappa).sum()
 
 
+class _Logits(nn.Module):
+    def __init__(self, backbone):
+        super().__init__()
+        self.backbone = backbone
+
+    def forward(self, x):
+        return self.backbone(x)[0]
+
+
+def _autoattack(backbone, x, y, eps, norm):
+    model = _Logits(backbone).eval()
+    with torch.no_grad():
+        n_classes = model(x[:1]).size(1)
+    if n_classes < 4:
+        raise ValueError(f"standard AutoAttack needs at least 4 classes, the model has {n_classes}")
+    try:
+        from autoattack import AutoAttack
+    except ImportError as e:
+        raise ImportError(
+            f"kind='autoattack' needs the autoattack package ({e}). "
+            "Install it with:  pip install git+https://github.com/fra31/auto-attack"
+        ) from e
+    adversary = AutoAttack(model, norm={"l_inf": "Linf", "l_2": "L2"}[norm], eps=eps, version="standard",
+                           verbose=False, device=x.device)
+    adversary.apgd_targeted.n_target_classes = min(9, n_classes - 1)
+    adversary.fab.n_target_classes = min(9, n_classes - 1)
+    x_adv = adversary.run_standard_evaluation(x, y, bs=x.size(0))
+    return (x_adv - x).detach()
+
+
 def attack(
     backbone,
     x,
@@ -62,6 +93,10 @@ def attack(
     """Return the perturbation delta; lambda_s > 0 gives the defense aware attack."""
     if kind == "none":
         return torch.zeros_like(x)
+    if kind == "autoattack":
+        if lambda_s > 0:
+            raise ValueError("the defense aware attack is not available with autoattack")
+        return _autoattack(backbone, x, y, eps, norm)
 
     random_start = kind == "pgd"
     delta = _init_delta(x, eps, norm, random_start)

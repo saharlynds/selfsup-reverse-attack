@@ -71,6 +71,28 @@ def main():
     assert r.abs().max().item() <= 16 / 255 + 1e-6, "reverse attack exceeded v"
     print(f"[ok] reverse attack: L_s {before.item():.3f} -> {after.item():.3f}, history={hist}")
 
+    negs = torch.rand(6, 3, 32, 32)
+    r2, _ = reverse_attack(backbone, head, aug, x, eps_rev=0.5, alpha=0.1, iters=3, n_views=2,
+                           norm="l_2", negatives=negs)
+    assert r2.flatten(1).norm(dim=1).max().item() <= 0.5 + 1e-4, "L2 reverse attack exceeded v"
+    d = attack(backbone, x, y, eps=0.5, alpha=0.1, iters=2, kind="pgd", norm="l_2", lambda_s=1.0,
+               ssl_head=head, aug=aug, n_views=2, negatives=negs)
+    assert d.flatten(1).norm(dim=1).max().item() <= 0.5 + 1e-4, "L2 attack exceeded epsilon"
+    with mock.patch.dict(sys.modules, {"autoattack": None}):
+        try:
+            attack(backbone, x, y, kind="autoattack")
+        except ImportError as e:
+            assert "pip install" in str(e), f"unhelpful ImportError: {e}"
+        else:
+            raise AssertionError("expected ImportError when autoattack is missing")
+    try:
+        attack(build_backbone("smallcnn", num_classes=2, width=8).eval(), x, y % 2, kind="autoattack")
+    except ValueError as e:
+        assert "at least 4 classes" in str(e), f"unexpected error: {e}"
+    else:
+        raise AssertionError("expected ValueError for a 2 class model with autoattack")
+    print("[ok] L2 attack and reverse within budget, negative set works, clear autoattack errors")
+
     plain = torch.nn.Sequential(
         torch.nn.Conv2d(3, 8, 3, padding=1), torch.nn.ReLU(), torch.nn.AdaptiveAvgPool2d(1),
         torch.nn.Flatten(), torch.nn.Linear(8, 12), torch.nn.ReLU(),

@@ -23,10 +23,11 @@ def main():
     p.add_argument("--test-per-class", type=int, default=250)
     p.add_argument("--n-test", type=int, default=500, help="maximum number of test images")
     p.add_argument("--batch-size", type=int, default=64)
-    p.add_argument("--attack", default="pgd", choices=["pgd", "bim", "cw", "none"])
+    p.add_argument("--attack", default="pgd", choices=["pgd", "bim", "cw", "autoattack", "none"])
     p.add_argument("--attack-iters", type=int, default=20)
     p.add_argument("--epsilon", type=float, default=8.0, help="attack budget, in units of 1/255")
     p.add_argument("--alpha", type=float, default=2.0, help="attack step size, in units of 1/255")
+    p.add_argument("--norm", default="l_inf", choices=["l_inf", "l_2"], help="norm of the attack and the reverse attack")
     p.add_argument("--lambda-s", type=float, default=0.0, help="weight of L_s in the defense aware attack; 0 turns it off")
     p.add_argument("--rev-mult", type=float, default=2.0, help="reverse attack budget, as a multiple of epsilon")
     p.add_argument("--rev-iters", type=int, default=40, help="number of reverse attack steps")
@@ -101,7 +102,7 @@ def main():
         x, y = x.to(device), y.to(device)
 
         delta = attack(
-            backbone, x, y, eps=eps, alpha=alpha, iters=args.attack_iters, kind=args.attack,
+            backbone, x, y, eps=eps, alpha=alpha, iters=args.attack_iters, norm=args.norm, kind=args.attack,
             lambda_s=args.lambda_s, ssl_head=head, aug=aug, n_views=args.n_views, negatives=negatives,
         )
         x_a = (x + delta).clamp(0, 1)
@@ -111,18 +112,17 @@ def main():
             counts["rob_std"] += (backbone(x_a)[0].argmax(1) == y).sum().item()
 
         if args.random_reverse:
-            r_a = torch.empty_like(x_a).uniform_(-eps_rev, eps_rev)
-            r_c = torch.empty_like(x).uniform_(-eps_rev, eps_rev)
-            hist = []
+            r_a, hist = reverse_attack(backbone, head, aug, x_a, eps_rev=eps_rev, iters=0, norm=args.norm)
+            r_c, _ = reverse_attack(backbone, head, aug, x, eps_rev=eps_rev, iters=0, norm=args.norm)
         else:
             r_a, hist = reverse_attack(
                 backbone, head, aug, x_a, eps_rev=eps_rev, alpha=rev_alpha, iters=args.rev_iters,
-                n_views=args.n_views, step=args.rev_step, track_every=args.track_every,
+                n_views=args.n_views, norm=args.norm, step=args.rev_step, track_every=args.track_every,
                 labels=y, negatives=negatives,
             )
             r_c, _ = reverse_attack(
                 backbone, head, aug, x, eps_rev=eps_rev, alpha=rev_alpha, iters=args.rev_iters,
-                n_views=args.n_views, step=args.rev_step, negatives=negatives,
+                n_views=args.n_views, norm=args.norm, step=args.rev_step, negatives=negatives,
             )
 
         with torch.no_grad():
@@ -151,6 +151,7 @@ def main():
         "attack": args.attack,
         "attack_iters": args.attack_iters,
         "epsilon_255": args.epsilon,
+        "norm": args.norm,
         "lambda_s": args.lambda_s,
         "n_negatives": 0 if negatives is None else len(negatives),
         "reverse": {"v_mult": args.rev_mult, "K": args.rev_iters, "step": args.rev_step,

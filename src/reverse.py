@@ -43,10 +43,13 @@ def reverse_attack(
         grad = torch.autograd.grad(loss, r)[0]
 
         with torch.no_grad():
-            if step == "sign":
-                new_r = r - alpha * grad.sign()
+            if step == "grad":
+                direction = grad
+            elif norm == "l_inf":
+                direction = grad.sign()
             else:
-                new_r = r - alpha * grad
+                direction = grad / (grad.flatten(1).norm(dim=1).view(-1, 1, 1, 1) + 1e-12)
+            new_r = r - alpha * direction
 
             if norm == "l_inf":
                 new_r = new_r.clamp(-eps_rev, eps_rev)
